@@ -218,6 +218,7 @@ export class GuildMusicPlayer {
   }
 
   private scheduleIdleLeave(): void {
+    if (!config.idleLeave) return;
     this.clearIdleTimer();
     this.idleTimer = setTimeout(() => {
       void this.notify('Left the voice channel due to inactivity.');
