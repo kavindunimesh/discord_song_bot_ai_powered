@@ -1,6 +1,7 @@
 import 'dotenv/config';
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
+import type { SimilarProviderId } from './ai/types';
 
 function required(name: string): string {
   const value = process.env[name]?.trim();
@@ -29,6 +30,15 @@ function resolveCookiesPath(): string | undefined {
   return existsSync(candidate) ? candidate : undefined;
 }
 
+function providerId(raw: string | undefined): SimilarProviderId {
+  const id = (raw ?? 'cursor').trim().toLowerCase();
+  if (id === 'cursor' || id === 'openai' || id === 'gemini' || id === 'custom') {
+    return id;
+  }
+  console.warn(`Unknown SIMILAR_PROVIDER "${raw}", falling back to cursor`);
+  return 'cursor';
+}
+
 export const config = {
   token: required('DISCORD_TOKEN'),
   clientId: required('DISCORD_CLIENT_ID'),
@@ -36,7 +46,22 @@ export const config = {
   youtubeCookiesPath: resolveCookiesPath(),
   maxQueueSize: 50,
   playCooldownMs: 3000,
-  /** Leave voice after the queue has been empty for idleLeaveMs. */
   idleLeave: bool('IDLE_LEAVE', false),
   idleLeaveMs: int('IDLE_LEAVE_MS', 5 * 60 * 1000),
+
+  autoSimilar: bool('AUTO_SIMILAR', true),
+  similarProvider: providerId(process.env.SIMILAR_PROVIDER),
+
+  cursorApiKey: process.env.CURSOR_API_KEY?.trim() || undefined,
+  cursorModel: process.env.CURSOR_MODEL?.trim() || 'composer-2.5',
+
+  openaiApiKey: process.env.OPENAI_API_KEY?.trim() || undefined,
+  openaiModel: process.env.OPENAI_MODEL?.trim() || 'gpt-4o-mini',
+  openaiBaseUrl: process.env.OPENAI_BASE_URL?.trim() || undefined,
+
+  geminiApiKey: process.env.GEMINI_API_KEY?.trim() || undefined,
+  geminiModel: process.env.GEMINI_MODEL?.trim() || 'gemini-2.0-flash',
+
+  customSimilarUrl: process.env.CUSTOM_SIMILAR_URL?.trim() || undefined,
+  customSimilarApiKey: process.env.CUSTOM_SIMILAR_API_KEY?.trim() || undefined,
 };

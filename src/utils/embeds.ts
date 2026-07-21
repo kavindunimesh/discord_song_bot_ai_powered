@@ -14,11 +14,15 @@ export function successEmbed(message: string): EmbedBuilder {
 export function nowPlayingEmbed(track: Track): EmbedBuilder {
   const embed = new EmbedBuilder()
     .setColor(ACCENT)
-    .setTitle('Now playing')
+    .setTitle(track.autoplay ? 'Now playing · autoplay' : 'Now playing')
     .setDescription(`[${track.title}](${track.url})`)
     .addFields(
       { name: 'Duration', value: formatDuration(track.durationSec), inline: true },
-      { name: 'Requested by', value: `<@${track.requestedById}>`, inline: true },
+      {
+        name: track.autoplay ? 'Suggested for' : 'Requested by',
+        value: `<@${track.requestedById}>`,
+        inline: true,
+      },
     );
 
   if (track.thumbnail) embed.setThumbnail(track.thumbnail);

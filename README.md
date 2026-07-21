@@ -37,6 +37,18 @@ Needs Connect, Speak, View Channel, Send Messages, Embed Links. Enable the Guild
 
 Control commands require you to be in the same voice channel as the bot.
 
+## Autoplay
+
+When the queue is empty, the bot prefetches a similar track **while the current song plays**, then starts it when the track ends. Providers are built into the bot (no separate service).
+
+```env
+AUTO_SIMILAR=true
+SIMILAR_PROVIDER=cursor   # cursor | openai | gemini | custom
+CURSOR_API_KEY=...
+```
+
+Switch later with `SIMILAR_PROVIDER=openai` / `gemini` / `custom` and the matching API key. Manual `/play` always wins over autoplay.
+
 ## Scripts
 
 - `pnpm dev` — hot reload

@@ -1,6 +1,5 @@
 import { spawn } from 'node:child_process';
 import { PassThrough, type Readable } from 'node:stream';
-import { User } from 'discord.js';
 import { StreamType } from '@discordjs/voice';
 import youtubeDl from 'youtube-dl-exec';
 import ffmpegPath from 'ffmpeg-static';
@@ -48,6 +47,11 @@ function commonYtdlpCliArgs(): string[] {
   ];
 }
 
+export type TrackRequester = {
+  id: string;
+  tag: string;
+};
+
 export type Track = {
   title: string;
   url: string;
@@ -55,6 +59,7 @@ export type Track = {
   thumbnail?: string;
   requestedById: string;
   requestedByTag: string;
+  autoplay?: boolean;
 };
 
 type YtDlpInfo = {
@@ -88,7 +93,7 @@ function pickThumbnail(info: YtDlpInfo): string | undefined {
   return thumbs?.at(-1)?.url;
 }
 
-function toTrack(info: YtDlpInfo, requester: User): Track {
+function toTrack(info: YtDlpInfo, requester: TrackRequester): Track {
   const url = info.webpage_url || info.original_url || info.url;
   if (!url) throw new Error('Could not resolve a playable URL.');
 
@@ -128,7 +133,7 @@ async function fetchInfo(target: string): Promise<YtDlpInfo> {
   return info;
 }
 
-export async function resolveTrack(query: string, requester: User): Promise<Track> {
+export async function resolveTrack(query: string, requester: TrackRequester): Promise<Track> {
   const trimmed = query.trim();
   if (!trimmed) throw new Error('Provide a song name or URL.');
 

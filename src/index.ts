@@ -1,4 +1,5 @@
 import { Client, Events, GatewayIntentBits } from 'discord.js';
+import { getSimilarSongsProvider } from './ai';
 import { config } from './config';
 import { loadCommands } from './loadCommands';
 import { errorEmbed } from './utils/embeds';
@@ -10,6 +11,15 @@ async function main(): Promise<void> {
 
   const commands = await loadCommands(client);
   console.log(`Loaded ${commands.length} commands`);
+
+  const similar = getSimilarSongsProvider();
+  if (config.autoSimilar) {
+    console.log(
+      similar
+        ? `Similar autoplay: on (provider=${similar.name})`
+        : 'Similar autoplay: off (provider not configured)',
+    );
+  }
 
   client.once(Events.ClientReady, (readyClient) => {
     console.log(`Logged in as ${readyClient.user.tag}`);
