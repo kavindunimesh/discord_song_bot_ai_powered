@@ -42,6 +42,8 @@ export class GuildMusicPlayer {
   private prefetched: Track | null = null;
   private prefetchPromise: Promise<Track | null> | null = null;
   private prefetchSeedUrl: string | null = null;
+  /** Extra similar tracks ready if the first autoplay candidate fails to stream. */
+  private similarFallbacks: Track[] = [];
   private recentUrls: string[] = [];
 
   constructor(guildId: string) {
@@ -151,7 +153,11 @@ export class GuildMusicPlayer {
     this.clearIdleTimer();
 
     try {
-      let next = this.queue.dequeue() ?? (await this.takePrefetched()) ?? undefined;
+      let next =
+        this.queue.dequeue() ??
+        (await this.takePrefetched()) ??
+        this.similarFallbacks.shift() ??
+        undefined;
 
       if (!next) {
         this.current = null;
@@ -161,12 +167,12 @@ export class GuildMusicPlayer {
       }
 
       this.current = next;
-      this.rememberUrl(next.url);
 
       const { stream, type } = await createTrackStream(next);
       const resource = createAudioResource(stream, { inputType: type, inlineVolume: true });
       resource.volume?.setVolume(1);
       this.player.play(resource);
+      this.rememberUrl(next.url);
 
       if (announce && this.textChannel) {
         await this.textChannel.send({ embeds: [nowPlayingEmbed(next)] }).catch(() => undefined);
@@ -174,9 +180,23 @@ export class GuildMusicPlayer {
 
       this.beginPrefetch(next);
     } catch (err) {
+      const failed = this.current;
       const message = err instanceof Error ? err.message : 'Unknown error';
       console.error(`[guild:${this.guildId}] failed to start track:`, err);
-      await this.notify(`Could not play **${this.current?.title ?? 'track'}**: ${message}`);
+
+      // Autoplay: skip noisy errors and try the next similar candidate
+      const canRetrySimilar =
+        Boolean(failed?.autoplay) &&
+        (this.similarFallbacks.length > 0 || Boolean(this.prefetched) || Boolean(this.prefetchPromise));
+
+      if (!canRetrySimilar) {
+        await this.notify(`Could not play **${failed?.title ?? 'track'}**: ${message}`);
+      } else {
+        console.warn(
+          `[guild:${this.guildId}] autoplay candidate failed, trying next: ${failed?.title ?? 'track'}`,
+        );
+      }
+
       this.current = null;
       await this.playNext(announce);
     } finally {
@@ -234,11 +254,36 @@ export class GuildMusicPlayer {
     await this.playNext();
   }
 
+  private async takePrefetched(): Promise<Track | null> {
+    if (!config.autoSimilar || !getSimilarSongsProvider()) return null;
+
+    if (this.prefetched) {
+      const track = this.prefetched;
+      this.prefetched = null;
+      this.prefetchPromise = null;
+      this.prefetchSeedUrl = null;
+      // keep similarFallbacks for stream failures
+      return track;
+    }
+
+    if (this.prefetchPromise) {
+      const track = await this.prefetchPromise;
+      this.prefetched = null;
+      this.prefetchPromise = null;
+      this.prefetchSeedUrl = null;
+      return track;
+    }
+
+    return this.similarFallbacks.shift() ?? null;
+  }
+
   private beginPrefetch(seed: Track): void {
     if (!config.autoSimilar || !getSimilarSongsProvider()) return;
     if (this.queue.size > 0) return;
 
-    this.clearPrefetch();
+    this.prefetched = null;
+    this.prefetchPromise = null;
+    this.similarFallbacks = [];
     this.prefetchSeedUrl = seed.url;
     const seedUrl = seed.url;
 
@@ -247,7 +292,12 @@ export class GuildMusicPlayer {
         if (this.destroyed || this.prefetchSeedUrl !== seedUrl) return null;
         this.prefetched = track;
         if (track) {
-          console.log(`[guild:${this.guildId}] prefetched similar: ${track.title}`);
+          console.log(
+            `[guild:${this.guildId}] prefetched similar: ${track.title}` +
+              (this.similarFallbacks.length
+                ? ` (+${this.similarFallbacks.length} fallbacks)`
+                : ''),
+          );
         }
         return track;
       })
@@ -255,24 +305,6 @@ export class GuildMusicPlayer {
         console.error(`[guild:${this.guildId}] similar prefetch failed:`, err);
         return null;
       });
-  }
-
-  private async takePrefetched(): Promise<Track | null> {
-    if (!config.autoSimilar || !getSimilarSongsProvider()) return null;
-
-    if (this.prefetched) {
-      const track = this.prefetched;
-      this.clearPrefetch();
-      return track;
-    }
-
-    if (this.prefetchPromise) {
-      const track = await this.prefetchPromise;
-      this.clearPrefetch();
-      return track;
-    }
-
-    return null;
   }
 
   private async resolveSimilarTrack(seed: Track): Promise<Track | null> {
@@ -283,14 +315,17 @@ export class GuildMusicPlayer {
       tag: seed.requestedByTag,
     };
 
+    const resolved: Track[] = [];
     for (const suggestion of suggestions) {
       if (this.destroyed) return null;
       const query = `${suggestion.name} ${suggestion.artist}`.trim();
       try {
         const track = await resolveTrack(query, requester);
         if (this.recentUrls.includes(track.url) || track.url === seed.url) continue;
+        if (resolved.some((t) => t.url === track.url)) continue;
         track.autoplay = true;
-        return track;
+        resolved.push(track);
+        if (resolved.length >= 3) break;
       } catch (err) {
         console.warn(
           `[guild:${this.guildId}] could not resolve similar "${query}":`,
@@ -299,13 +334,16 @@ export class GuildMusicPlayer {
       }
     }
 
-    return null;
+    if (!resolved.length) return null;
+    this.similarFallbacks = resolved.slice(1);
+    return resolved[0] ?? null;
   }
 
   private clearPrefetch(): void {
     this.prefetched = null;
     this.prefetchPromise = null;
     this.prefetchSeedUrl = null;
+    this.similarFallbacks = [];
   }
 
   private rememberUrl(url: string): void {

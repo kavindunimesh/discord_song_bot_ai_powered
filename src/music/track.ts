@@ -184,9 +184,12 @@ export async function createTrackStream(track: Track): Promise<{
   const ffmpeg = spawn(
     ffmpegPath,
     [
-      '-i', 'pipe:0',
-      '-analyzeduration', '0',
+      '-hide_banner',
       '-loglevel', 'error',
+      // Let ffmpeg probe enough of the yt-dlp stream (0 often breaks on VPS)
+      '-probesize', '32M',
+      '-analyzeduration', '10M',
+      '-i', 'pipe:0',
       '-f', 's16le',
       '-ar', '48000',
       '-ac', '2',
@@ -201,15 +204,72 @@ export async function createTrackStream(track: Track): Promise<{
     throw new Error('Failed to create audio stream.');
   }
 
-  ytdlp.stdout.pipe(ffmpeg.stdin);
-
   let ytdlpErr = '';
   let ffmpegErr = '';
+  let ytdlpBytes = 0;
   ytdlp.stderr?.on('data', (chunk: Buffer) => {
     ytdlpErr += chunk.toString();
   });
   ffmpeg.stderr?.on('data', (chunk: Buffer) => {
     ffmpegErr += chunk.toString();
+  });
+
+  // Wait for real audio bytes from yt-dlp before attaching ffmpeg (avoids empty/HTML pipe errors)
+  await new Promise<void>((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      cleanupEarly();
+      reject(
+        new Error(
+          friendlyYtdlpError(
+            ytdlpErr.trim() || 'Timed out waiting for YouTube audio (yt-dlp produced no data).',
+          ),
+        ),
+      );
+    }, 45_000);
+
+    const cleanupEarly = () => {
+      clearTimeout(timeout);
+      try {
+        ytdlp.kill('SIGKILL');
+      } catch {
+        /* ignore */
+      }
+      try {
+        ffmpeg.kill('SIGKILL');
+      } catch {
+        /* ignore */
+      }
+    };
+
+    ytdlp.on('error', (err) => {
+      cleanupEarly();
+      reject(err);
+    });
+
+    ytdlp.on('close', (code) => {
+      if (ytdlpBytes > 0) return;
+      if (code && code !== 0) {
+        clearTimeout(timeout);
+        reject(
+          new Error(
+            friendlyYtdlpError(
+              ytdlpErr.trim() || `yt-dlp failed (exit ${code})`,
+            ),
+          ),
+        );
+      }
+    });
+
+    ytdlp.stdout.once('data', (first: Buffer) => {
+      clearTimeout(timeout);
+      ytdlpBytes += first.length;
+      if (!ffmpeg.stdin.write(first)) {
+        ytdlp.stdout.pause();
+        ffmpeg.stdin.once('drain', () => ytdlp.stdout.resume());
+      }
+      ytdlp.stdout.pipe(ffmpeg.stdin);
+      resolve();
+    });
   });
 
   const output = new PassThrough({ highWaterMark: 1 << 20 });
@@ -241,16 +301,27 @@ export async function createTrackStream(track: Track): Promise<{
   await new Promise<void>((resolve, reject) => {
     const timeout = setTimeout(() => {
       cleanup();
-      reject(new Error('Timed out waiting for audio stream to start.'));
+      reject(
+        new Error(
+          friendlyYtdlpError(
+            ytdlpErr.trim() || 'Timed out waiting for ffmpeg to decode audio.',
+          ),
+        ),
+      );
     }, 45_000);
 
+    let settled = false;
     const fail = (message: string) => {
+      if (settled) return;
+      settled = true;
       clearTimeout(timeout);
       cleanup();
-      reject(new Error(message));
+      reject(new Error(friendlyYtdlpError(message)));
     };
 
     ffmpeg.stdout.once('data', (chunk: Buffer) => {
+      if (settled) return;
+      settled = true;
       clearTimeout(timeout);
       if (!output.destroyed) output.write(chunk);
       ffmpeg.stdout.on('data', (next: Buffer) => {
@@ -266,14 +337,18 @@ export async function createTrackStream(track: Track): Promise<{
     });
 
     ytdlp.on('close', (code) => {
-      if (code && code !== 0) {
-        fail(`yt-dlp failed${ytdlpErr.trim() ? `: ${ytdlpErr.trim().slice(0, 300)}` : ` (exit ${code})`}`);
+      if (code && code !== 0 && !settled) {
+        fail(ytdlpErr.trim() || `yt-dlp failed (exit ${code})`);
       }
     });
 
     ffmpeg.on('close', (code) => {
-      if (code && code !== 0) {
-        fail(`ffmpeg failed${ffmpegErr.trim() ? `: ${ffmpegErr.trim().slice(0, 300)}` : ` (exit ${code})`}`);
+      if (code && code !== 0 && !settled) {
+        const detail =
+          ytdlpErr.trim() ||
+          ffmpegErr.trim() ||
+          `ffmpeg failed (exit ${code})`;
+        fail(detail);
       }
     });
   });
