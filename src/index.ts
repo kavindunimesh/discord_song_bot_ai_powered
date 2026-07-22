@@ -12,6 +12,14 @@ async function main(): Promise<void> {
   const commands = await loadCommands(client);
   console.log(`Loaded ${commands.length} commands`);
 
+  if (config.youtubeCookiesPath) {
+    console.log(`YouTube cookies: ${config.youtubeCookiesPath}`);
+  } else {
+    console.warn(
+      'YouTube cookies not found (cookies.txt). VPS / VPN IPs will often fail bot-check.',
+    );
+  }
+
   const similar = getSimilarSongsProvider();
   if (config.autoSimilar) {
     console.log(

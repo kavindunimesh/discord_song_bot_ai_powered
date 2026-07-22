@@ -147,8 +147,25 @@ export async function resolveTrack(query: string, requester: TrackRequester): Pr
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown error';
     if (message.includes('Playlists are not supported')) throw err;
-    throw new Error(`Could not resolve track: ${message}`);
+    throw new Error(`Could not resolve track: ${friendlyYtdlpError(message)}`);
   }
+}
+
+function friendlyYtdlpError(message: string): string {
+  const lower = message.toLowerCase();
+  if (lower.includes("confirm you're not a bot") || lower.includes('sign in to confirm')) {
+    if (!config.youtubeCookiesPath) {
+      return (
+        'YouTube blocked this server IP. Upload a fresh cookies.txt to the bot folder ' +
+        '(export while logged into YouTube), then restart the bot.'
+      );
+    }
+    return (
+      'YouTube blocked this server IP even with cookies. Re-export a fresh cookies.txt ' +
+      'while logged into youtube.com, upload it to the VPS, and restart the bot.'
+    );
+  }
+  return message;
 }
 
 export async function createTrackStream(track: Track): Promise<{

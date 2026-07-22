@@ -26,8 +26,17 @@ function int(name: string, fallback: number): number {
 
 function resolveCookiesPath(): string | undefined {
   const fromEnv = process.env.YOUTUBE_COOKIES_PATH?.trim();
-  const candidate = resolve(fromEnv || 'cookies.txt');
-  return existsSync(candidate) ? candidate : undefined;
+  const candidates = [
+    fromEnv ? resolve(fromEnv) : undefined,
+    // Prefer project root (works even when PM2 cwd is wrong)
+    resolve(__dirname, '..', 'cookies.txt'),
+    resolve(process.cwd(), 'cookies.txt'),
+  ];
+
+  for (const candidate of candidates) {
+    if (candidate && existsSync(candidate)) return candidate;
+  }
+  return undefined;
 }
 
 function providerId(raw: string | undefined): SimilarProviderId {
