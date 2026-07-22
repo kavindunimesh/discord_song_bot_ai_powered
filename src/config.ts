@@ -1,7 +1,11 @@
-import 'dotenv/config';
+import { config as loadEnv } from 'dotenv';
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import type { SimilarProviderId } from './ai/types';
+
+// Load .env from project root (works when PM2 cwd is wrong)
+loadEnv({ path: resolve(__dirname, '..', '.env') });
+loadEnv(); // also allow cwd override
 
 function required(name: string): string {
   const value = process.env[name]?.trim();
